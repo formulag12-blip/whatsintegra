@@ -4,6 +4,7 @@ const fs = require('fs')
 const path = require('path')
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys')
 const qrcode = require('qrcode-terminal')
+const QRCode = require('qrcode')
 const P = require('pino')
 
 const app = express()
@@ -131,7 +132,71 @@ async function createSocket(saveCreds, onUpdate) {
 // ─── Routes ─────────────────────────────────────────────────────────────────
 
 app.get('/', (req, res) => {
-    res.send('OK')
+    const connected = status === 'conectado'
+    const hasQR     = !!currentQR
+
+    const bodyContent = connected
+        ? `<p class="badge connected">✅ Connected</p>
+           <p>WhatsApp is connected. No QR code needed.</p>`
+        : hasQR
+            ? `<p class="badge waiting">📱 Waiting for scan</p>
+               <p>Scan the QR code below with WhatsApp to connect.</p>
+               <img src="/qr-image" alt="WhatsApp QR Code" />`
+            : `<p class="badge disconnected">⏳ Not ready</p>
+               <p>No QR code available yet. Call <code>GET /start</code> to begin.</p>`
+
+    res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="refresh" content="10" />
+  <title>WhatsApp QR</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #f0f2f5;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 4px 24px rgba(0,0,0,.10);
+      padding: 40px 48px;
+      text-align: center;
+      max-width: 420px;
+      width: 100%;
+    }
+    h1 { font-size: 1.4rem; color: #111; margin-bottom: 20px; }
+    p  { color: #555; margin-bottom: 16px; line-height: 1.5; }
+    code { background: #f0f2f5; padding: 2px 6px; border-radius: 4px; font-size: .9em; }
+    img { margin-top: 8px; width: 240px; height: 240px; border-radius: 8px; border: 1px solid #e0e0e0; }
+    .badge {
+      display: inline-block;
+      font-size: .85rem;
+      font-weight: 600;
+      padding: 4px 12px;
+      border-radius: 999px;
+      margin-bottom: 16px;
+    }
+    .connected    { background: #d4edda; color: #155724; }
+    .waiting      { background: #fff3cd; color: #856404; }
+    .disconnected { background: #f8d7da; color: #721c24; }
+    .hint { font-size: .78rem; color: #999; margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>WhatsApp Connection</h1>
+    ${bodyContent}
+    <p class="hint">Page refreshes automatically every 10 seconds.</p>
+  </div>
+</body>
+</html>`)
 })
 
 app.get('/start', async (req, res) => {
@@ -182,6 +247,29 @@ app.get('/start', async (req, res) => {
 
 app.get('/qr', (req, res) => {
     res.json({ qr: currentQR })
+})
+
+app.get('/qr-image', async (req, res) => {
+    if (!currentQR) {
+        return res.status(404).json({ error: 'QR code not available. Call /start first.' })
+    }
+
+    try {
+        const pngBuffer = await QRCode.toBuffer(currentQR, {
+            type: 'png',
+            width: 512,
+            margin: 2,
+            color: { dark: '#000000', light: '#ffffff' },
+        })
+
+        res.setHeader('Content-Type', 'image/png')
+        res.setHeader('Content-Length', pngBuffer.length)
+        res.setHeader('Cache-Control', 'no-store')
+        res.end(pngBuffer)
+    } catch (err) {
+        console.error('[/qr-image] Failed to generate PNG:', err.message)
+        res.status(500).json({ error: 'Failed to generate QR image' })
+    }
 })
 
 app.get('/session/qr/:sessionId', (req, res) => {
