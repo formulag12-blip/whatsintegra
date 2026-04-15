@@ -256,8 +256,8 @@ app.get('/start', async (req, res) => {
     })
 
     try {
-        await qrPromise
-        res.json({ message: 'iniciado', qr: currentQR })
+        const qr = await qrPromise
+        res.json({ message: 'iniciado', qr: qr ?? currentQR })
     } catch (err) {
         console.error('[/start] Error:', err.message)
         res.status(504).json({ message: 'iniciado', qr: null, error: err.message })
