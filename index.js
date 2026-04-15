@@ -59,6 +59,7 @@ async function createSocket(saveCreds, onUpdate) {
     const socket = makeWASocket({
         logger: P({ level: 'warn' }),   // 'warn' surfaces important Baileys internals without noise
         auth: state,
+        version: [2, 3000, 1034074495], // current stable WhatsApp Web protocol version
         printQRInTerminal: false,       // we handle QR rendering ourselves
         connectTimeoutMs: 30_000,
         defaultQueryTimeoutMs: 30_000,
