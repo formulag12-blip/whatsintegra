@@ -57,3 +57,12 @@ const PORT = process.env.PORT || 3000
 app.listen(PORT, '0.0.0.0', () => {
     console.log('SERVIDOR RODANDO NA PORTA ' + PORT)
 })
+app.get('/session/status/:id', (req, res) => {
+    const sessionId = req.params.id
+
+    res.json({
+        sessionId,
+        status: status,
+        qr: currentQR
+    })
+})
