@@ -24,28 +24,44 @@ app.get('/start', async (req, res) => {
         auth: state
     })
 
-    sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect, qr } = update
+    const qrPromise = new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+            reject(new Error('Timeout: QR code not generated within 30 seconds'))
+        }, 30000)
 
-        if (qr) {
-            currentQR = qr
-            console.log('QR GERADO')
-            qrcode.generate(qr, { small: true })
-        }
+        sock.ev.on('connection.update', (update) => {
+            const { connection, lastDisconnect, qr } = update
 
-        if (connection === 'open') {
-            status = 'conectado'
-            console.log('CONECTADO')
-        }
+            if (qr) {
+                currentQR = qr
+                console.log('QR GERADO')
+                qrcode.generate(qr, { small: true })
+                clearTimeout(timeout)
+                resolve(qr)
+            }
 
-        if (connection === 'close') {
-            status = 'desconectado'
-        }
+            if (connection === 'open') {
+                status = 'conectado'
+                console.log('CONECTADO')
+                clearTimeout(timeout)
+                resolve(null)
+            }
+
+            if (connection === 'close') {
+                status = 'desconectado'
+            }
+        })
     })
 
     sock.ev.on('creds.update', saveCreds)
 
-    res.json({ message: 'iniciado' })
+    try {
+        await qrPromise
+        res.json({ message: 'iniciado', qr: currentQR })
+    } catch (err) {
+        console.error(err.message)
+        res.status(504).json({ message: 'iniciado', qr: null, error: err.message })
+    }
 })
 
 app.get('/qr', (req, res) => {
@@ -53,6 +69,10 @@ app.get('/qr', (req, res) => {
 })
 app.get('/session/qr/:sessionId', (req, res) => {
     const sessionId = req.params.sessionId
+
+    if (!currentQR) {
+        return res.status(404).json({ sessionId, qr: null, error: 'QR code not available' })
+    }
 
     res.json({
         sessionId,
