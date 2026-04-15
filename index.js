@@ -51,12 +51,6 @@ app.get('/start', async (req, res) => {
 app.get('/qr', (req, res) => {
     res.json({ qr: currentQR })
 })
-
-const PORT = process.env.PORT || 3000
-
-app.listen(PORT, '0.0.0.0', () => {
-    console.log('SERVIDOR RODANDO NA PORTA ' + PORT)
-})
 app.get('/session/status/:id', (req, res) => {
     const sessionId = req.params.id
 
@@ -65,4 +59,36 @@ app.get('/session/status/:id', (req, res) => {
         status: status,
         qr: currentQR
     })
+})
+app.post('/session/start', async (req, res) => {
+    const { state, saveCreds } = await useMultiFileAuthState('/tmp/auth_sessions')
+
+    sock = makeWASocket({
+        auth: state
+    })
+
+    sock.ev.on('connection.update', (update) => {
+        const { connection, qr } = update
+
+        if (qr) {
+            currentQR = qr
+            console.log('QR GERADO')
+        }
+
+        if (connection === 'open') {
+            status = 'conectado'
+            console.log('CONECTADO')
+        }
+    })
+
+    sock.ev.on('creds.update', saveCreds)
+
+    res.json({ success: true })
+})
+
+
+const PORT = process.env.PORT || 3000
+
+app.listen(PORT, '0.0.0.0', () => {
+    console.log('SERVIDOR RODANDO NA PORTA ' + PORT)
 })
