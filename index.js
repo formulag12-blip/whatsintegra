@@ -62,13 +62,23 @@ async function createSocket(saveCreds, onUpdate) {
         auth: state,
         version: [2, 3000, 1034074495], // current stable WhatsApp Web protocol version
         printQRInTerminal: false,       // we handle QR rendering ourselves
-        connectTimeoutMs: 30_000,
-        defaultQueryTimeoutMs: 30_000,
+        connectTimeoutMs: 60_000,
+        defaultQueryTimeoutMs: 60_000,
         keepAliveIntervalMs: 10_000,
         retryRequestDelayMs: 2_000,
     })
 
-    socket.ev.on('creds.update', saveCreds)
+    // Register creds.update FIRST — before any other listener — so credentials
+    // are persisted to disk the moment Baileys emits them (critical on new login).
+    socket.ev.on('creds.update', async () => {
+        try {
+            console.log('[Baileys] Saving credentials...')
+            await saveCreds()
+            console.log('[Baileys] Credentials saved successfully')
+        } catch (err) {
+            console.error('[Baileys] Failed to save credentials:', err.message)
+        }
+    })
 
     socket.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr, receivedPendingNotifications, isNewLogin } = update
@@ -81,6 +91,15 @@ async function createSocket(saveCreds, onUpdate) {
             statusCode: lastDisconnect?.error?.output?.statusCode,
             errorMessage: lastDisconnect?.error?.message,
         }))
+
+        // When a new QR scan succeeds, isNewLogin is true. Wait briefly to give
+        // the creds.update event time to fire and flush credentials to disk before
+        // the stream can error, preventing a status-515 restart loop.
+        if (isNewLogin) {
+            console.log('[Baileys] New login detected — waiting for credentials to be saved...')
+            await new Promise((resolve) => setTimeout(resolve, 2000))
+            console.log('[Baileys] Credentials wait complete — session should now be persisted')
+        }
 
         if (qr) {
             currentQR = qr
@@ -97,7 +116,7 @@ async function createSocket(saveCreds, onUpdate) {
         if (connection === 'open') {
             status = 'conectado'
             currentQR = null
-            console.log('[Baileys] Connection established successfully')
+            console.log('[Baileys] Connection fully established — session is active')
         }
 
         if (connection === 'close') {
