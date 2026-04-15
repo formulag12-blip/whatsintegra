@@ -60,6 +60,7 @@ function shouldReconnect(statusCode) {
 async function createSocket(saveCreds, onUpdate) {
     const { state } = await useMultiFileAuthState('/tmp/auth_sessions')
 
+    isLoggingIn = true
     console.log('[Baileys] Creating new socket...')
 
     const socket = makeWASocket({
@@ -84,8 +85,6 @@ async function createSocket(saveCreds, onUpdate) {
             console.log('[Baileys] Saving credentials...')
             await saveCreds()
             console.log('[Baileys] Credentials saved successfully')
-            // Clear the login flag once credentials are safely on disk.
-            isLoggingIn = false
         } catch (err) {
             console.error('[Baileys] Failed to save credentials:', err.message)
         }
@@ -102,13 +101,6 @@ async function createSocket(saveCreds, onUpdate) {
             statusCode: lastDisconnect?.error?.output?.statusCode,
             errorMessage: lastDisconnect?.error?.message,
         }))
-
-        // Mark that a login is in progress so we can suppress spurious
-        // reconnect attempts triggered by the post-scan stream error (515).
-        if (isNewLogin) {
-            isLoggingIn = true
-            console.log('[Baileys] New login detected — credentials will be saved by creds.update')
-        }
 
         if (qr) {
             currentQR = qr
