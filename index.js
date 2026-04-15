@@ -1,5 +1,7 @@
 const express = require('express')
 const cors = require('cors')
+const fs = require('fs')
+const path = require('path')
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys')
 const qrcode = require('qrcode-terminal')
 const P = require('pino')
@@ -49,6 +51,11 @@ app.get('/start', async (req, res) => {
 
             if (connection === 'close') {
                 status = 'desconectado'
+                const statusCode = lastDisconnect?.error?.output?.statusCode
+                const errorMessage = lastDisconnect?.error?.message || 'unknown error'
+                console.error(`Connection closed — reason: ${errorMessage} (status: ${statusCode})`)
+                clearTimeout(timeout)
+                reject(new Error(`Connection closed: ${errorMessage} (status: ${statusCode})`))
             }
         })
     })
@@ -92,11 +99,12 @@ app.post('/session/start', async (req, res) => {
     const { state, saveCreds } = await useMultiFileAuthState('/tmp/auth_sessions')
 
     sock = makeWASocket({
+        logger: P({ level: 'silent' }),
         auth: state
     })
 
     sock.ev.on('connection.update', (update) => {
-        const { connection, qr } = update
+        const { connection, lastDisconnect, qr } = update
 
         if (qr) {
             currentQR = qr
@@ -107,11 +115,50 @@ app.post('/session/start', async (req, res) => {
             status = 'conectado'
             console.log('CONECTADO')
         }
+
+        if (connection === 'close') {
+            status = 'desconectado'
+            const statusCode = lastDisconnect?.error?.output?.statusCode
+            const errorMessage = lastDisconnect?.error?.message || 'unknown error'
+            console.error(`Connection closed — reason: ${errorMessage} (status: ${statusCode})`)
+        }
     })
 
     sock.ev.on('creds.update', saveCreds)
 
     res.json({ success: true })
+})
+
+const AUTH_SESSIONS_DIR = '/tmp/auth_sessions'
+
+app.post('/clear-sessions', async (req, res) => {
+    try {
+        if (sock) {
+            try {
+                sock.ev.removeAllListeners()
+                await sock.logout()
+            } catch (_) {
+                // socket may already be closed; proceed regardless
+            }
+            sock = null
+        }
+
+        currentQR = null
+        status = 'desconectado'
+
+        if (fs.existsSync(AUTH_SESSIONS_DIR)) {
+            const files = fs.readdirSync(AUTH_SESSIONS_DIR)
+            for (const file of files) {
+                fs.rmSync(path.join(AUTH_SESSIONS_DIR, file), { recursive: true, force: true })
+            }
+            console.log(`Cleared ${files.length} session file(s) from ${AUTH_SESSIONS_DIR}`)
+        }
+
+        res.json({ success: true, message: 'Sessions cleared. Ready to start a fresh connection.' })
+    } catch (err) {
+        console.error('Error clearing sessions:', err.message)
+        res.status(500).json({ success: false, error: err.message })
+    }
 })
 
 
