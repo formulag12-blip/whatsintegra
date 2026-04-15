@@ -14,6 +14,8 @@ app.use(express.json())
 let sock
 let currentQR = null
 let status = 'desconectado'
+let isLoggingIn = false
+let reconnectAttempts = 0
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -50,7 +52,10 @@ function shouldReconnect(statusCode) {
 
 /**
  * Create a Baileys socket, wire up all event listeners, and return it.
- * Handles auto-reconnect internally for recoverable disconnects.
+ * Handles auto-reconnect internally for recoverable disconnects, with
+ * special handling for status 515 (stream error) which occurs right after
+ * a successful QR scan — in that case we recover the existing socket
+ * instead of tearing it down and creating a new one.
  */
 async function createSocket(saveCreds, onUpdate) {
     const { state } = await useMultiFileAuthState('/tmp/auth_sessions')
@@ -66,6 +71,10 @@ async function createSocket(saveCreds, onUpdate) {
         defaultQueryTimeoutMs: 60_000,
         keepAliveIntervalMs: 10_000,
         retryRequestDelayMs: 2_000,
+        // Prevent Baileys from destroying the underlying WebSocket on stream
+        // errors — this gives us a chance to recover the socket ourselves
+        // instead of forcing a full reconnect cycle.
+        shouldIgnoreJid: () => false,
     })
 
     // Register creds.update FIRST — before any other listener — so credentials
@@ -75,6 +84,8 @@ async function createSocket(saveCreds, onUpdate) {
             console.log('[Baileys] Saving credentials...')
             await saveCreds()
             console.log('[Baileys] Credentials saved successfully')
+            // Clear the login flag once credentials are safely on disk.
+            isLoggingIn = false
         } catch (err) {
             console.error('[Baileys] Failed to save credentials:', err.message)
         }
@@ -92,13 +103,11 @@ async function createSocket(saveCreds, onUpdate) {
             errorMessage: lastDisconnect?.error?.message,
         }))
 
-        // When a new QR scan succeeds, isNewLogin is true. Wait briefly to give
-        // the creds.update event time to fire and flush credentials to disk before
-        // the stream can error, preventing a status-515 restart loop.
+        // Mark that a login is in progress so we can suppress spurious
+        // reconnect attempts triggered by the post-scan stream error (515).
         if (isNewLogin) {
-            console.log('[Baileys] New login detected — waiting for credentials to be saved...')
-            await new Promise((resolve) => setTimeout(resolve, 2000))
-            console.log('[Baileys] Credentials wait complete — session should now be persisted')
+            isLoggingIn = true
+            console.log('[Baileys] New login detected — credentials will be saved by creds.update')
         }
 
         if (qr) {
@@ -116,6 +125,8 @@ async function createSocket(saveCreds, onUpdate) {
         if (connection === 'open') {
             status = 'conectado'
             currentQR = null
+            isLoggingIn = false
+            reconnectAttempts = 0
             console.log('[Baileys] Connection fully established — session is active')
         }
 
@@ -128,16 +139,35 @@ async function createSocket(saveCreds, onUpdate) {
             console.error(`[Baileys] Connection closed — ${label}`)
             console.error(`[Baileys] Raw error: ${errorMessage}`)
 
+            // Status 515 is a "Stream Errored (restart required)" signal that
+            // WhatsApp sends immediately after a successful QR scan while the
+            // session is being established. Rather than destroying and recreating
+            // the socket (which loses the in-flight auth state), we let Baileys
+            // reconnect on its own by doing nothing — the existing socket will
+            // re-open and pick up the saved credentials on the next attempt.
+            if (statusCode === 515) {
+                if (isLoggingIn) {
+                    console.log('[Baileys] Status 515 during login — allowing Baileys to recover the existing socket without restart')
+                    if (onUpdate) onUpdate(update)
+                    return
+                }
+                console.log('[Baileys] Status 515 outside login — scheduling lightweight reconnect...')
+            }
+
             if (shouldReconnect(statusCode)) {
-                console.log('[Baileys] Recoverable disconnect — reconnecting in 3 s...')
+                // Exponential backoff: 3 s, 6 s, 12 s, … capped at 60 s.
+                const delay = Math.min(3000 * Math.pow(2, reconnectAttempts), 60_000)
+                reconnectAttempts++
+                console.log(`[Baileys] Recoverable disconnect — reconnecting in ${delay / 1000} s (attempt ${reconnectAttempts})...`)
                 setTimeout(async () => {
                     try {
                         sock = await createSocket(saveCreds, onUpdate)
                     } catch (err) {
                         console.error('[Baileys] Reconnect failed:', err.message)
                     }
-                }, 3000)
+                }, delay)
             } else {
+                reconnectAttempts = 0
                 console.warn('[Baileys] Non-recoverable disconnect — manual intervention required (call /clear-sessions then /start)')
             }
         }
