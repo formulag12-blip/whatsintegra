@@ -1,7 +1,15 @@
-"dependencies": {
-  "@whiskeysockets/baileys": "latest",
-  "qrcode-terminal": "latest",
-  "pino": "latest",
-  "express": "latest",
-  "cors": "latest"
+{
+  "name": "whatsapp-bot",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "latest",
+    "qrcode-terminal": "latest",
+    "pino": "latest",
+    "express": "latest",
+    "cors": "latest"
+  }
 }
