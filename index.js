@@ -51,6 +51,14 @@ app.get('/start', async (req, res) => {
 app.get('/qr', (req, res) => {
     res.json({ qr: currentQR })
 })
+app.get('/session/qr/:sessionId', (req, res) => {
+    const sessionId = req.params.sessionId
+
+    res.json({
+        sessionId,
+        qr: currentQR
+    })
+})
 app.get('/session/status/:id', (req, res) => {
     const sessionId = req.params.id
 
